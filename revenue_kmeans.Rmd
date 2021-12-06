@@ -1,0 +1,65 @@
+---
+title: "revenue_model"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+#Load libraries
+library(tidyverse)
+library(plotly)
+library(htmltools)
+library(devtools)
+library(caret)
+library(NbClust)
+```
+
+
+```{r}
+movies = read.csv('./Movies.csv')
+movies2 = movies[-c(1:20000),]
+
+#convert to factor
+movies$original_language = as.factor(movies$original_language)
+```
+
+### Clustering
+
+```{r}
+# Clustering
+# Find the number of clusters using NBCluster
+
+#str(movies)
+
+# we want to select the total number of rows, but drop salary later
+clust_data_movies = movies2
+
+```
+
+```{r}
+# dont include salary
+clust_data_movies = clust_data_movies[, -c(2,4)]
+#view(clust_data_movies)
+
+clust_data_movies = na.omit(clust_data_movies)
+#clust_data_movies = select_if(movies,is.numeric)
+```
+
+```{r}
+set.seed(1)
+
+kmeans_obj_movies = kmeans(clust_data_movies, centers = 3, #iter.max=30
+                        algorithm = "Lloyd")
+
+kmeans_obj_movies
+
+#Run Nbcluster
+(nbclust_obj_movies = NbClust(data = clust_data_movies, method = "kmeans"))
+```
+
+
+
+
