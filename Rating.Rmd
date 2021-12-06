@@ -1,0 +1,198 @@
+---
+title: "Rating"
+author: "zcp7yd"
+date: "12/6/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE, cache = TRUE)
+
+# dt, rf, knn, kmeans
+```
+
+# Rating 
+
+## Loading Dataset and Packages
+
+```{r}
+# Loading our dataset 
+library(tidyverse)
+library(caret)
+library(class)
+library(plotly)
+library(rio)
+library(plyr)
+library(rpart)
+library(psych)
+library(pROC)
+#install.packages("rpart.plot")
+library(rpart.plot)
+#install.packages("rattle")
+library(rattle)
+library(caret)
+library(C50) #Need this to pass into caret 
+library(mlbench)
+Movies <- read.csv('./Movies.csv')
+str(Movies)
+
+```
+
+
+## Data Partitioning                
+```{r}
+# Determining data composition
+(table(Movies$vote_average)[2])/(sum(table(Movies$vote_average)))
+
+# Partition into train, tune, and test
+part_index_1 <- createDataPartition(Movies$vote_average,
+                                           times=1,
+                                           p = 0.75,
+                                           groups=1,
+                                           list=FALSE)
+View(part_index_1)
+train <- Movies[part_index_1,]
+tune_and_test <- Movies[-part_index_1, ]
+
+# Call the createDataPartition again to create the tune set 
+
+tune_and_test_index <- createDataPartition(tune_and_test$vote_average,
+                                           p = .5,
+                                           list = FALSE,
+                                           times = 1)
+tune <- tune_and_test[tune_and_test_index, ]
+test <- tune_and_test[-tune_and_test_index, ]
+dim(train)
+dim(tune)
+dim(test)
+```
+
+
+## Training
+```{r}
+# Training the k = 3 classifier using the class package. 
+
+# Setting seed so results are reproducible
+
+# "runtime", "budget", "revenue", "Animation", "Comedy", "Adventure", "Fantasy", "Drama", "Romance", "Action", "Crime", "Thriller", "History", "ScienceFiction", "Mystery", "Western", "Horror", "Documentary", "Music", "War"
+
+set.seed(3001)
+movies_3NN <-  knn(train = train[, c("runtime", "budget", "revenue", "popularity", "vote_count")],#<- training set cases
+               test = tune[, c("runtime", "budget", "revenue", "popularity", "vote_count")],    #<- test set cases
+               cl = train$vote_average,#<- category for true classification
+               k = 1,#<- number of neighbors considered
+               use.all = TRUE,
+               prob = TRUE) #<- control ties between class assignments If true, all distances equal to the kth largest are included
+# View the output.
+
+str(movies_3NN)
+table(movies_3NN)
+length(movies_3NN)
+
+```
+
+
+## Classification Comparison
+```{r}
+# How does the kNN classification compare to the true class?
+
+# Combining the predictions from movies_3NN to the original data set.
+kNN_res = table(movies_3NN,
+                tune$vote_average)
+kNN_res
+sum(kNN_res)  
+
+# TP TN
+kNN_res[row(kNN_res) == col(kNN_res)]
+# Calculate the accuracy rate by dividing the correct classifications by the total number of classifications.
+kNN_acc = sum(kNN_res[row(kNN_res) == col(kNN_res)]) / sum(kNN_res)
+kNN_acc
+# An 5.7 % accuracy rate is improved from the baserate of 0.02%.
+
+str(movies_3NN)
+str(as.factor((tune$vote_average)))
+
+confusionMatrix(as.factor(movies_3NN), as.factor(tune$vote_average), positive = "1", dnn=c("Prediction", "Actual"), mode = "sens_spec")
+      
+#Reference for confusion matrix: https://www.rdocumentation.org/packages/caret/versions/6.0-86/topics/confusionMatrix 
+```
+```{r}
+str(movies_3NN)
+movies_prob_1 <- tibble(attr(movies_3NN, "prob"))
+movies_prob_1
+final_model <- tibble(k_prob=movies_prob_1$`attr(movies_3NN, "prob")`,pred=movies_3NN,target=tune$vote_average)
+#Need to convert this to the likelihood to be in the poss class.
+final_model$pos_prec <- ifelse(final_model$pred == 0, 1-final_model$k_prob, final_model$k_prob)
+View(final_model)
+confusionMatrix(final_model$pred, final_model$target, positive = "1", dnn=c("Prediction", "Actual"), mode = "sens_spec")
+adjust_thres <- function(x, y, z) {
+  #x=pred_probablities, y=threshold, z=test_outcome
+  thres <- as.factor(ifelse(x > y, 1,0))
+  confusionMatrix(thres, z, positive = "1", dnn=c("Prediction", "Actual"), mode = "everything")
+}
+adjust_thres(final_model$pos_prec,.35,final_model$target)
+library(ROCR)
+pred <- prediction(final_model$pos_prec,final_model$target)
+View(pred)
+knn_perf <- performance(pred,"tpr","fpr")
+plot(knn_perf, colorize=TRUE)
+abline(a=0, b= 1)
+knn_perf_AUC <- performance(pred,"auc")
+print(knn_perf_AUC@y.values)
+library(MLmetrics)
+LogLoss(as.numeric(final_model$pos_prec), as.numeric(final_model$target))
+F1_Score(y_pred = final_model$pred, y_true = final_model$target, positive = "1")
+```
+
+
+## Selecting the correct "k"
+```{r}
+# How does "k" affect classification accuracy? Let's create a function
+# to calculate classification accuracy based on the number of "k."
+chooseK = function(k, train_set, val_set, train_class, val_class){
+  
+  # Build knn with k neighbors considered.
+  set.seed(3001)
+  class_knn = knn(train = train_set,    #<- training set cases
+                  test = val_set,       #<- test set cases
+                  cl = train_class,     #<- category for classification
+                  k = k,                #<- number of neighbors considered
+                  use.all = TRUE)       #<- control ties between class assignments
+                                        #   If true, all distances equal to the kth 
+                                        #   largest are included
+  conf_mat = table(class_knn, val_class)
+  
+  # Calculate the accuracy.
+  accu = sum(conf_mat[row(conf_mat) == col(conf_mat)]) / sum(conf_mat)                         
+  cbind(k = k, accuracy = accu)
+}
+# The sapply() function plugs in several values into our chooseK function.
+#sapply(x, fun...) "fun" here is passing a function to our k-function
+# function(x)[function] allows you to apply a series of numbers
+# to a function without running a for() loop! Returns a matrix.
+knn_different_k = sapply(seq(1, 21, by = 2),  #<- set k to be odd number from 1 to 21
+                         function(x) chooseK(x, 
+                          train_set = train[, c("runtime", "budget", "revenue", "Animation", "Comedy", "Adventure", "Fantasy", "Drama", "Romance", "Action", "Crime", "Thriller", "History", "ScienceFiction", "Mystery", "Western", "Horror", "Documentary", "Music", "War")],
+                          val_set = tune[, c("runtime", "budget", "revenue", "Animation", "Comedy", "Adventure", "Fantasy", "Drama", "Romance", "Action", "Crime", "Thriller", "History", "ScienceFiction", "Mystery", "Western", "Horror", "Documentary", "Music", "War")],
+                          train_class = train$vote_average,
+                          val_class = tune$vote_average))
+#A bit more of a explanation...
+seq(1,21, by=2)#just creates a series of numbers
+sapply(seq(1, 21, by=2), function(x) x+1)#sapply returns a new vector using the series of numbers and some calculation that is repeated over the vector of numbers 
+# Reformating the results to graph
+View(knn_different_k)
+class(knn_different_k)#matrix 
+head(knn_different_k)
+knn_different_k = data.frame(k = knn_different_k[1,],
+                             accuracy = knn_different_k[2,])
+# Plot accuracy vs. k.
+ggplot(knn_different_k,
+       aes(x = k, y = accuracy)) +
+  geom_line(color = "orange", size = 1.5) +
+  geom_point(size = 3)
+# 5 to 7 nearest neighbors seems to be a good choice because that's the
+# greatest improvement in predictive accuracy before the incremental 
+# improvement trails off.
+```
+
+
