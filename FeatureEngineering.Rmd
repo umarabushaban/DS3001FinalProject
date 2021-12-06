@@ -1,0 +1,99 @@
+---
+title: 'Final Project: Feature Engineering'
+author: "Xander Atalay"
+date: "12/4/2021"
+output: html_document
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE, cache = TRUE)
+```
+
+```{r Installing Libraries}
+# Setting my working directory (this can be local because this is the only script that interacts with the raw data)
+setwd("~/Desktop/Virginia/Y3/Y3S1/DS 3001/Final Project")
+library(tidyverse)
+```
+
+```{r Loading Data}
+RawData <- read.csv('./movies_metadata.csv')
+str(RawData)
+
+# Creating new data frame to modify (saves needing to reload data every time)
+StructuredData <- RawData[,c(3,4,8,11,16,17,21,23,24)]
+
+# All of the numeric parameters:
+NumericList <- c("budget", "popularity", names(select_if(StructuredData, is.numeric)))
+
+# Making sure everything is the right type
+StructuredData$original_language <- as.factor(StructuredData$original_language)
+StructuredData[,NumericList] <- lapply(StructuredData[,NumericList], as.numeric)
+StructuredData <- StructuredData[complete.cases(StructuredData),]
+
+
+# Removing non-predictive numeric data (revenue and rating)
+NumericList <- NumericList[-c(2,3,5)]
+
+# Normalizing numeric predictive data
+normalize <- function(x){
+ (x - min(x))/(max(x) - min(x))
+}
+StructuredData[NumericList] <- as.data.frame(lapply(StructuredData[NumericList], normalize))
+
+# Modifying original langauge to a factor with fewer levels:
+table(StructuredData$original_language)
+
+otherLangauges <- levels(StructuredData[(!StructuredData$original_language %in% c("en", "fr", "ja", "de","it")),]$original_language)
+
+StructuredData$original_language <- fct_collapse(StructuredData$original_language, 
+                                                 Other = otherLangauges,
+                                                 English = "en",
+                                                 French = "fr",
+                                                 Japanese = "ja",
+                                                 Italian = "it",
+                                                 German = "de")
+table(StructuredData$original_language)
+
+str(StructuredData)
+# Looks like we're all set to move on to genres!
+
+```
+
+```{r One Hot Encoding Genres}
+
+# The genres parameter is pretty tricky because the table has movies with character lists of different genres. The best way to solve this problem and simultaneously one-hot encode the df is to check if a genre string is present and add a 1 to that genres column.
+
+for(i in 1:length((StructuredData$genres))){
+  if(grepl("Animation", StructuredData$genres[i], fixed = TRUE)){StructuredData[i, "Animation"] = TRUE} else{StructuredData[i, "Animation"] = FALSE}
+  if(grepl("Comedy", StructuredData$genres[i], fixed = TRUE)){StructuredData[i, "Comedy"] = TRUE} else{StructuredData[i, "Comedy"] = FALSE}
+  if(grepl("Adventure", StructuredData$genres[i], fixed = TRUE)){StructuredData[i, "Adventure"] = TRUE} else{StructuredData[i, "Adventure"] = FALSE}
+  if(grepl("Fantasy", StructuredData$genres[i], fixed = TRUE)){StructuredData[i, "Fantasy"] = TRUE} else{StructuredData[i, "Fantasy"] = FALSE}
+  if(grepl("Drama", StructuredData$genres[i], fixed = TRUE)){StructuredData[i, "Drama"] = TRUE} else{StructuredData[i, "Drama"] = FALSE}
+  if(grepl("Romance", StructuredData$genres[i], fixed = TRUE)){StructuredData[i, "Romance"] = TRUE} else{StructuredData[i, "Romance"] = FALSE}
+  if(grepl("Action", StructuredData$genres[i], fixed = TRUE)){StructuredData[i, "Action"] = TRUE} else{StructuredData[i, "Action"] = FALSE}
+  if(grepl("Crime", StructuredData$genres[i], fixed = TRUE)){StructuredData[i, "Crime"] = TRUE} else{StructuredData[i, "Crime"] = FALSE}
+  if(grepl("Thriller", StructuredData$genres[i], fixed = TRUE)){StructuredData[i, "Thriller"] = TRUE} else{StructuredData[i, "Thriller"] = FALSE}
+  if(grepl("History", StructuredData$genres[i], fixed = TRUE)){StructuredData[i, "History"] = TRUE} else{StructuredData[i, "History"] = FALSE}
+  if(grepl("Science Fiction", StructuredData$genres[i], fixed = TRUE)){StructuredData[i, "ScienceFiction"] = TRUE} else{StructuredData[i, "ScienceFiction"] = FALSE}
+  if(grepl("Mystery", StructuredData$genres[i], fixed = TRUE)){StructuredData[i, "Mystery"] = TRUE} else{StructuredData[i, "Mystery"] = FALSE}
+  if(grepl("Western", StructuredData$genres[i], fixed = TRUE)){StructuredData[i, "Western"] = TRUE} else{StructuredData[i, "Western"] = FALSE}
+  if(grepl("Horror", StructuredData$genres[i], fixed = TRUE)){StructuredData[i, "Horror"] = TRUE} else{StructuredData[i, "Horror"] = FALSE}
+  if(grepl("Documentary", StructuredData$genres[i], fixed = TRUE)){StructuredData[i, "Documentary"] = TRUE} else{StructuredData[i, "Documentary"] = FALSE}
+  if(grepl("Music", StructuredData$genres[i], fixed = TRUE)){StructuredData[i, "Music"] = TRUE} else{StructuredData[i, "Music"] = FALSE}
+  if(grepl("War", StructuredData$genres[i], fixed = TRUE)){StructuredData[i, "War"] = TRUE} else{StructuredData[i, "War"] = FALSE}
+}
+
+str(Movies)
+Movies <- StructuredData[,-c(2,7)]
+Titles <- StructuredData[, -2]
+
+```
+
+```{r Writing Tables}
+
+# Finally, we'll write out the feature engineered data frames to make it easier to impliment them into other scripts.
+
+write_csv(Movies, "./Movies.csv")
+write_csv(Titles, "./Titles.csv")
+
+```
