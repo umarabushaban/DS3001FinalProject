@@ -1,0 +1,176 @@
+---
+title: "Rating"
+author: "zcp7yd"
+date: "12/6/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE, cache = TRUE)
+
+# dt, rf, knn, kmeans
+```
+
+# Rating 
+
+## Data Preparation
+
+```{r}
+# Loading packages
+
+library(tidyverse)
+library(class)
+library(plotly)
+library(rio)
+library(plyr)
+library(rpart)
+library(psych)
+library(pROC)
+library(rpart.plot)
+library(rattle)
+library(caret)
+library(C50) 
+library(mlbench)
+```
+
+```{r}
+# Loading our dataset
+Movies <- read.csv('./Movies.csv')
+str(Movies)
+
+# Converting rating into a factor, with level 1 greater than 7.5 and 0 otherwise.
+Movies$Rating <- 0
+Movies[Movies$vote_average > 7.5,]$Rating <- 1
+Movies[Movies$vote_average < 7.5,]$Rating <- 0
+Movies <- Movies[,-7]
+
+```
+
+
+## Data Partitioning                
+```{r}
+# Determining data composition and baseline/prevalence
+(table(Movies$Rating)[2])/(sum(table(Movies$Rating)))
+
+# Partition into train, tune, and test
+part_index_1 <- createDataPartition(Movies$Rating,
+                                           times=1,
+                                           p = 0.70,
+                                           groups=1,
+                                           list=FALSE)
+View(part_index_1)
+train <- Movies[part_index_1,]
+tune_and_test <- Movies[-part_index_1, ]
+
+# Call the createDataPartition again to create the tune set 
+
+tune_and_test_index <- createDataPartition(tune_and_test$Rating,
+                                           p = .5,
+                                           list = FALSE,
+                                           times = 1)
+tune <- tune_and_test[tune_and_test_index, ]
+test <- tune_and_test[-tune_and_test_index, ]
+dim(train)
+dim(tune)
+dim(test)
+```
+This prevalence of 7.6% shows the random chance of determining a highly rated movie, as reflected by the actual prevalence of highly rated movies (above a 7.5 vote_average).
+
+## Selecting "k"
+```{r}
+# Function to calculate classification accuracy based on the number of "k."
+chooseK = function(k, train_set, val_set, train_class, val_class){
+  
+  # Build knn with k neighbors considered.
+  set.seed(3001)
+  class_knn = knn(train = train_set,    #<- training set cases
+                  test = val_set,       #<- test set cases
+                  cl = train_class,     #<- category for classification
+                  k = k,                #<- number of neighbors considered
+                  use.all = TRUE)       #<- control ties between class assignments
+                                        #   If true, all distances equal to the kth 
+                                        #   largest are included
+  conf_mat = table(class_knn, val_class)
+  
+  # Calculate the accuracy.
+  accu = sum(conf_mat[row(conf_mat) == col(conf_mat)]) / sum(conf_mat)                         
+  cbind(k = k, accuracy = accu)
+}
+set.seed(3001)
+knn_different_k = sapply(seq(1, 21, by = 2),  #<- set k to be odd number from 1 to 21
+                         function(x) chooseK(x, 
+                          train_set = train[, c("runtime", "budget", "Animation", "Comedy", "Adventure", "Fantasy", "Drama", "Romance", "Action", "Crime", "Thriller", "History", "ScienceFiction", "Mystery", "Western", "Horror", "Documentary", "Music", "War")],
+                          val_set = tune[, c("runtime", "budget", "Animation", "Comedy", "Adventure", "Fantasy", "Drama", "Romance", "Action", "Crime", "Thriller", "History", "ScienceFiction", "Mystery", "Western", "Horror", "Documentary", "Music", "War")],
+                          train_class = train$Rating,
+                          val_class = tune$Rating))
+
+View(knn_different_k)
+class(knn_different_k)#matrix 
+head(knn_different_k)
+knn_different_k = data.frame(k = knn_different_k[1,],
+                             accuracy = knn_different_k[2,])
+# Plot accuracy vs. k.
+k_plot <- ggplot(knn_different_k,aes(x = k, y = accuracy)) +
+  geom_line(color = "orange", size = 1.5) +
+  geom_point(size = 3) +
+  ggtitle("KNN Elbow Chart")
+
+k_plot
+```
+A KNN Elbow Chart was created above plotting k against accuracy to determine that 7 nearest neighbors seems to be the best choice for k because the model's accuracy peaks at 92% when k = 5 before trailing off as k increases.
+
+## Training the K Classifier
+```{r}
+# Training the k classifier using the class package. 
+
+# Setting seed so results are reproducible from KNN's randomized algorithm
+set.seed(3001)
+
+# Target variables include runtime, budget, and genre. Revenue and popularity were excluded as these are highly correlated to rating, and are only known after the movie is released, which isn't helpful for our business question of movie production.
+movies_3NN <-  knn(train = train[, c("runtime", "budget", "Animation", "Comedy", "Adventure", "Fantasy", "Drama", "Romance", "Action", "Crime", "Thriller", "History", "ScienceFiction", "Mystery", "Western", "Horror", "Documentary", "Music", "War")],#<- training set cases
+               test = tune[, c("runtime", "budget", "Animation", "Comedy", "Adventure", "Fantasy", "Drama", "Romance", "Action", "Crime", "Thriller", "History", "ScienceFiction", "Mystery", "Western", "Horror", "Documentary", "Music", "War")],    #<- test set cases
+               cl = train$Rating,#<- category for true classification
+               k = 7,#<- number of neighbors considered
+               use.all = TRUE,
+               prob = TRUE) #<- control ties between class assignments If true, all distances equal to the kth largest are included
+
+# Viewing the output:
+str(movies_3NN)
+table(movies_3NN)
+length(movies_3NN)
+
+```
+
+
+## KNN Classification Comparison
+```{r}
+# How does the kNN classification compare to the true class?
+
+# Combining the predictions from movies_3NN to the original data set.
+kNN_res = table(movies_3NN,
+                tune$Rating)
+kNN_res
+sum(kNN_res)  
+
+# TP TN
+kNN_res[row(kNN_res) == col(kNN_res)]
+# Calculate the accuracy rate by dividing the correct classifications by the total number of classifications.
+kNN_acc = sum(kNN_res[row(kNN_res) == col(kNN_res)]) / sum(kNN_res)
+kNN_acc
+# Our KNN model returns a 92 % accuracy rate of predicting a highly rated move (with an average vote above 7.5), which is a great improvement from the baserate of 7.6%.
+
+str(movies_3NN)
+str(as.factor((tune$Rating)))
+
+confusionMatrix(as.factor(movies_3NN), as.factor(tune$Rating), positive = "1", dnn=c("Prediction", "Actual"), mode = "sens_spec")
+      
+#Reference for confusion matrix: https://www.rdocumentation.org/packages/caret/versions/6.0-86/topics/confusionMatrix 
+```
+Our KNN model confusion matrix produces a 92 % accuracy rate of predicting a highly rated move (a movie with an average vote above 7.5), which is a great improvement from the baserate of 7.6%. The sensitivity or true positive rate, when highly rated movies are accurately classified, is 1.9%, which is very low. However, the model's specificity is 99%, and false positive rate is 100% - 99% = 1%, which is very low, meaning the model rarely inaccurately classifies poorly rated movies as highly rated ones. 
+
+The high accuracy and specificity show our model usually accurately classifies movie ratings, which is important in informing our business problem of deciding how to create a highly rated movie based on genre, budget, and runtime.
+
+
+
+
+
