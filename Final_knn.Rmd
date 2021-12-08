@@ -199,8 +199,8 @@ Movies$vote_average
 Movies <- Movies[Movies$vote_average !=0,]
 # Converting rating into a factor, with level 1 greater than 7.5 and 0 otherwise.
 Movies$Rating <- 0
-Movies[Movies$vote_average > 7.5,]$Rating <- 1
-Movies[Movies$vote_average <= 7.5,]$Rating <- 0
+Movies[Movies$vote_average > 6.5,]$Rating <- 1
+Movies[Movies$vote_average <= 6.5,]$Rating <- 0
 Movies <- Movies[,-6]
 str(Movies)
 ```
@@ -210,6 +210,7 @@ str(Movies)
 ```{r Zoe Data Partitioning}
 # Determining data composition and baseline/prevalence
 (table(Movies$Rating)[2])/(sum(table(Movies$Rating)))
+Movies$Rating
 # Partition into train, tune, and test
 part_index_1 <- createDataPartition(Movies$Rating,
                                            times=1,
@@ -222,7 +223,7 @@ test <- Movies[-part_index_1, ]
 dim(train)
 dim(test)
 ```
-This prevalence of 8.1% shows the random chance of determining a highly rated movie, as reflected by the actual prevalence of highly rated movies (above a 7.5 vote_average).
+This prevalence of 34% shows the random chance of determining a highly rated movie, as reflected by the actual prevalence of highly rated movies (above a 6.5 vote_average).
 
 ### Selecting "k"
 ```{r Selecting K}
@@ -303,7 +304,7 @@ confusionMatrix(as.factor(movies_3NN), as.factor(test$Rating), positive = "1", d
       
 #Reference for confusion matrix: https://www.rdocumentation.org/packages/caret/versions/6.0-86/topics/confusionMatrix 
 ```
-Our KNN model confusion matrix produces a 90 % accuracy rate of predicting a highly rated move (a movie with an average vote above 7.5), which is a great improvement from the baserate of 8.1%. The sensitivity or true positive rate, when highly rated movies are accurately classified, is 4.1%, which is very low. However, the model's specificity is 98%, and false positive rate is 100% - 98% = 2%, which is very low, meaning the model rarely inaccurately classifies poorly rated movies as highly rated ones. 
+Our KNN model confusion matrix produces a 65 % accuracy rate of predicting a highly rated move (a movie with an average vote above 7.5), which is a great improvement from the baserate of 8.1%. The sensitivity or true positive rate, when highly rated movies are accurately classified, is 35%, which is very low. However, the model's specificity is 81%, and false positive rate is 100% - 81% = 19%, which is very low, meaning the model rarely inaccurately classifies poorly rated movies as highly rated ones. 
 
 The high accuracy and specificity show our model usually accurately classifies movie ratings, which is important in informing our business problem of deciding how to create a highly rated movie based on genre, budget, and runtime.
 
