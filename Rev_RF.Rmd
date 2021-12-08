@@ -1,0 +1,228 @@
+---
+title: "Rev_RF"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, warning=FALSE, include=FALSE}
+library(randomForest)
+library(rio)
+library(plyr)
+library(tidyverse)
+library(rpart)
+library(psych)
+library(pROC)
+#install.packages("rpart.plot")
+library(rpart.plot)
+#install.packages("rattle")
+library(rattle)
+library(caret)
+library(C50) #Need this to pass into caret 
+library(mlbench)
+library(MLmetrics)
+library(ROCR)
+library(mltools)
+library(data.table)
+```
+
+```{r}
+movies = read.csv('./Movies.csv')
+movies[movies == "0"] <- NA
+movies[movies == "?"] <- NA
+movies <- movies[complete.cases(movies),]
+na.omit(movies)
+#movies = movies[1:1000,]
+
+movies = movies %>%
+  mutate(new_rev = case_when(revenue > 1000000 ~ ">1mil",
+                             revenue < 1000000 ~ "<1mil"
+                             #TRUE ~ 0 #check this
+                             ))
+
+#turn all the character columns into factor.
+movies[2] = as.factor(movies$original_language)
+movies[25] = as.factor(movies$new_rev)
+
+#boolean to factor:
+movies[,c(8:24)] = lapply(movies[,c(8:24)], as.factor)
+
+
+
+```
+
+Create test, tune and training sets 
+```{r}
+#Split your data into test, tune, and train. (70/15/15)
+
+sample_rows = 1:nrow(movies)
+#sample_rows
+
+set.seed(1984) #sample(x, size, replace = FALSE, prob = NULL)
+test_rows = sample(sample_rows,
+                   dim(movies)[1]*.10, #start with 10% of our dataset, could do 20%
+                   # but random forest does require more training data because of the 
+                   # sampling so 90% might be a better approach with this small of a dataset
+                   replace = FALSE)# We don't want duplicate samples
+
+str(test_rows)
+
+#movies_train will hold 90% of the data, we're gonna use this to create different random forest models, but that other 10% that I wont touch will be in the movies_test version. Going to use that later to evaluate the model. Will be independent and untouched while I play around with the random forest models in the beginning.
+
+movies_train = movies[-test_rows,]
+
+movies_test = movies[test_rows,]
+
+
+#Splitting the Data
+
+#There is not a easy way to create 3 partitions using the createDataPartitions
+#so we are going to use it twice. Mostly because we want to stratify on the variable we are working to predict. What does that mean?  
+part_index_1 <- caret::createDataPartition(movies$new_rev,
+                                           times=1,
+                                           p = 0.70,
+                                           groups=1,
+                                           list=FALSE)
+
+train <- movies[part_index_1, ]
+tune_and_test <- movies[-part_index_1, ]
+
+#The we need to use the function again to create the tuning set 
+
+tune_and_test_index <- createDataPartition(tune_and_test$new_rev,
+                                           p = .5,
+                                           list = FALSE,
+                                           times = 1)
+
+tune <- tune_and_test[tune_and_test_index, ]
+test <- tune_and_test[-tune_and_test_index, ]
+
+
+dim(train)
+dim(test)# these will be slightly off because the data set isn't perfectly even
+#buts its not a issue. 
+dim(tune)
+
+```
+
+Calculate the initial mtry level 
+```{r}
+
+mytry_tune <- function(x){
+  xx <- dim(x)[2]-1
+  sqrt(xx)
+}
+       
+mytry_tune(movies)
+```
+
+Run the initial RF model with 500 trees 
+```{r}
+#default to 500
+
+set.seed(2023)	
+movies_RF = randomForest(new_rev~., na.action=na.omit,  #<- Formula: response variable ~ predictors.
+                            #   The period means 'use all other variables in the data'.
+                            movies_train,     #<- A data frame with the variables to be used.
+                            #y = NULL,           #<- A response vector. This is unnecessary because we're specifying a response formula.
+                            #subset = NULL,      #<- This is unnecessary because we're using all the rows in the training data set.
+                            #xtest = NULL,       #<- This is already defined in the formula by the ".".
+                            #ytest = NULL,       #<- This is already defined in the formula by "PREGNANT".
+                            ntree = 500,        #<- Number of trees to grow. This should not be set to too small a number, to ensure that every input row gets classified at least a few times.
+                            mtry = 5,            #<- Number of variables randomly sampled as candidates at each split. Default number for classification is sqrt(# of variables). Default number for regression is (# of variables / 3).
+                            replace = TRUE,      #<- Should sampled data points be replaced.
+                            #classwt = NULL,     #<- Priors of the classes. Use this if you want to specify what proportion of the data SHOULD be in each class. This is relevant if your sample data is not completely representative of the actual population 
+                            #strata = NULL,      #<- Not necessary for our purpose here.
+                            sampsize = 100,      #<- Size of sample to draw each time.
+                            nodesize = 5,        #<- Minimum numbers of data points in terminal nodes.
+                            #maxnodes = NULL,    #<- Limits the number of maximum splits. 
+                            importance = TRUE,   #<- Should importance of predictors be assessed?
+                            #localImp = FALSE,   #<- Should casewise importance measure be computed? (Setting this to TRUE will override importance.)
+                            proximity = FALSE,    #<- Should a proximity measure between rows be calculated?
+                            norm.votes = TRUE,   #<- If TRUE (default), the final result of votes are expressed as fractions. If FALSE, raw vote counts are returned (useful for combining results from different runs).
+                            do.trace = TRUE,     #<- If set to TRUE, give a more verbose output as randomForest is run.
+                            keep.forest = TRUE,  #<- If set to FALSE, the forest will not be retained in the output object. If xtest is given, defaults to FALSE.
+                            keep.inbag = TRUE)   #<- Should an n by ntree matrix be returned that keeps track of which samples are in-bag in which trees? 
+
+movies_RF
+
+#So Looking at the confusion matrix of movies_RF, we can see that the class.error for the 0 class is pretty low, sitting at only around 5.10% The class.error for the 1 class is higher, sitting ar around 50.4%. the OOB estimate of error rate is around ~16%. I'm going to interpret some of this data and visualize it along with the error rates before changing some of the parameters in the random forest function to see how it affects my model.
+
+#OOB estimate of  error rate: 29%
+```
+
+
+Using the training and tune datasets tune the model in consideration of the number
+of trees, the number of variables to sample and the sample size that optimize the model
+output. 
+```{r}
+
+# This is how you can call up the criteria we set for the random forest:
+movies_RF$call
+
+# Call up the confusion matrix and check the accuracy of the model.
+movies_RF$confusion
+movies_RF_acc = sum(movies_RF$confusion[row(movies_RF$confusion) == 
+                                                col(movies_RF$confusion)]) / 
+  sum(movies_RF$confusion)
+
+movies_RF_acc
+# 0.99
+
+
+# The "inbag" argument shows you which data point is included in which trees.
+str(as.data.frame(movies_RF$inbag))
+#View(as.data.frame(movies_RF$inbag))
+
+inbag <- as.data.frame(movies_RF$inbag)
+
+sum(inbag[,500])
+
+dim(movies_RF$inbag)
+
+str(as.data.frame(movies_RF$proximity)) 
+#View(as.data.frame(movies_RF$proximity)) #blank
+
+err.rate <- as.data.frame(movies_RF$err.rate)
+
+#View(err.rate)
+
+#### Visualize random forest results ####
+
+# Let's visualize the results of the random forest.
+# Let's start by looking at how the error rate changes as we add more trees.
+movies_RF_error = data.frame(1:nrow(movies_RF$err.rate),
+                                movies_RF$err.rate)
+
+colnames(movies_RF_error) = c("Number of Trees", "Out of the Bag",
+                                 "<$1M", ">$1M")
+
+movies_RF_error$Diff <- movies_RF_error$`>$1M`-movies_RF_error$`<$1M`
+
+#View(movies_RF_error)
+
+
+library(plotly)
+
+fig <- plot_ly(x=movies_RF_error$`Number of Trees`, y=movies_RF_error$Diff,name="Diff", type = 'scatter', mode = 'lines')
+fig <- fig %>% add_trace(y=movies_RF_error$`Out of the Bag`, name="OOB_Er")
+fig <- fig %>% add_trace(y=movies_RF_error$`<$1M`, name="<$1M")
+fig <- fig %>% add_trace(y=movies_RF_error$`>$1M`, name=">$1M")
+
+fig
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
