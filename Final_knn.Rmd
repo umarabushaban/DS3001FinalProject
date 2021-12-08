@@ -1,0 +1,636 @@
+---
+title: "Movie Metrics and Models"
+author: "Xander Atalay, Zoe Pham, Umar Abushaban"
+date: "12/8/2021"
+output:
+  html_document:
+    toc: yes
+    theme: cosmo
+    toc_float: yes
+  pdf_document:
+    toc: yes
+editor_options:
+  chunk_output_type: inline
+---
+## Introduction:
+
+### Our group is taking a look at a movie dataset with metadata including reveneu and rating. We're going to be exploring this data and the relationships within it, and creating models that try to predict whether a movie will suceed or not based on factors such as genre, budget, langauge, and popularity.{.unlisted .unnumbered}
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, cache = FALSE)
+```
+
+```{r Libraries, include=FALSE}
+library(tidyverse)
+library(ggplot2)
+library(e1071)
+library(htmltools)
+library(devtools)
+library(NbClust)
+library(class)
+library(plotly)
+library(rio)
+library(plyr)
+library(rpart)
+library(psych)
+library(pROC)
+library(rpart.plot)
+library(rattle)
+library(caret)
+library(C50) 
+library(mlbench)
+library(randomForest)
+library(MLmetrics)
+library(ROCR)
+library(mltools)
+library(data.table)
+```
+
+```{r Loading in Data}
+Movies <- read.csv("./Movies.csv")
+Titles <- read.csv("./Titles.csv")
+```
+
+## Initial Data Exploration {.tabset}
+
+### The Dataset
+```{r Exploring Data I}
+cat("Here are the parameters that we have for each movie: \n")
+colnames(Titles)
+cat("\n")
+cat("The general structure of the data frame is: \n")
+str(Titles)
+cat("As you can see, we've one-hot encoded the genres of the movies!")
+```
+
+### Parameters of Interest {.tabset}
+
+#### Relative Sucess
+```{r Exploring Data II}
+cat("We have three metrics we can use to define a movie's success based on what we're trying to achieve as a production company. If we're Disney, we're probably most concenred with how much money a movie is making, or the reveneu: ")
+hist(Movies$revenue, breaks = 10)
+cat("This doesn't really get us much because, expectedly, the amount of money that a movie can make has a huge range with only few reaching the billion dollar mark. Looking at the log of the reveneu gives us a better spread:")
+(ggplot(Movies, aes(x = log(revenue))) 
+  + geom_histogram(bins = 50)
+  + geom_histogram(bins = 50, color = "black", fill = cm.colors(50, alpha = 0.75))) 
+cat("The other metric we can look at for sucess is average vote, which we might be concerned with if we were indie filmakers or going for oscars!")
+(ggplot(Movies, aes(x = vote_average)) 
+  + geom_histogram(bins = 50, color = "black", fill = cm.colors(50))) 
+cat("Oof why are there so many movies with 0... maybe we should take that out before we begin.")
+cat("Finally, let's see how these sucess metrics are related with a quick linear model")
+ggplot(Movies, aes(x = vote_average, y = log(Movies$revenue))) + geom_point(size = 0.5, alpha = 0.5) + stat_smooth(method = "lm")
+summary(lm(Movies$vote_average ~ Movies$revenue))
+```
+
+#### Genres
+```{r Exploring Data III}
+cat("This is one of the more interesting metrics we have acess to, and I'm excited to start looking into what the most popular genres / genre combinations are.\n")
+cat("First let's just take a look at what I think will be the most popular genres and then we can look at exactly how common each one is.")
+cat("Action movies:")
+(table(Movies$Action))[2]
+cat("Adventure movies:")
+(table(Movies$Adventure))[2]
+cat("Romance movies:")
+(table(Movies$Romance))[2]
+genres <- colnames(Movies)[8:24]
+counts <- c()
+gmean <- c()
+grevMean <- c()
+gsd <- c()
+grevSD <- c()
+for(val in genres){
+  genreDF <- Movies[Movies[,val] == TRUE,]
+  genreNum <- length(genreDF$budget)
+  cat(paste(val, ": \n", ""))
+  cat(paste(genreNum, "\n \n", ""))
+  counts <- c(counts, genreNum)
+  gmean <- c(gmean, mean(genreDF$vote_average))
+  gsd <- c(gsd, sd(genreDF$vote_average))
+  grevMean <- c(grevMean, mean(genreDF$revenue))
+  grevSD <- c(grevSD, sd(genreDF$revenue))
+}
+genres <- data.frame(genres, counts, gmean, gsd, grevMean, grevSD)
+cat("Here are the number of movies in each genre:")
+ggplot(genres, aes(x = genres, y = counts, fill = counts)) + geom_bar(stat = "identity") + scale_color_continuous() + theme(axis.text.x = element_text(angle = -90))
+cat("And here's a plot of the average rating for each genre: ")
+(ggplot(genres, aes(x = genres, y = gmean, fill = gmean)) 
+  + geom_bar(stat="identity", color="black", position=position_dodge()) 
+  + geom_errorbar(aes(ymin=gmean-gsd, ymax=gmean+gsd), width=.2, position=position_dodge(.9)) 
+  + theme(axis.text.x = element_text(angle = -90)))
+cat("And now reveneu: ")
+(ggplot(genres, aes(x = genres, y = grevMean, fill = grevMean)) 
+  + geom_bar(stat="identity", color="black", position=position_dodge()) 
+  + theme(axis.text.x = element_text(angle = -90)))
+cat("And here's a quick linear regression model to test for any significance for documetary: ")
+summary(lm(Movies$vote_average ~ Movies$Documentary))
+summary(lm(Movies$revenue ~ Movies$Documentary))
+cat("We definitely see signficance! This suggests that these genre metrics may help us build models to predict which movies will perform best.")
+```
+
+### Evaluating Relationships
+```{r Exploring Data IV}
+cat("Finally, before we get into the models, we'll check for some more significance across the other parameters. \n")
+cat("Movie Language:")
+summary(lm(Movies$vote_average ~ Movies$original_language))
+cat("Budget:")
+ggplot(Movies, aes(x = budget, y = vote_average)) + geom_point(size = 0.5) + geom_smooth(method = lm)
+summary(lm(Movies$vote_average ~ Movies$budget))
+cat("It looks like budget and movie langauge are both also solid predictors of a movie's sucess. Let's see how our models do now:")
+```
+
+
+
+### Clustering Approach
+```{r}
+cat("We won't put too much time into this model because I don't anticipate we'll find much clustering, but it's still worth looking into!")
+Movie_drop <- c("vote_average", "revenue", "original_language")
+Movie_Cluster_Data <- Movies[, !(names(Movies)) %in% Movie_drop]
+str(Movie_Cluster_Data)
+cat("Let's see if we have any clustering by genre, we have a lot of genres so we'll only use the most popular ones.")
+set.seed(1)
+kmeans_Movies = kmeans(Movie_Cluster_Data, centers = 4, algorithm = "Lloyd")
+Movie_Clusters = as.factor(kmeans_Movies$cluster)
+(ggplot(Movies, aes(y = revenue, 
+                x = vote_average,
+                shape = Movie_Clusters,
+                color = Action)) + 
+  geom_point(size = 1) +
+  scale_shape_manual(name = "Cluster", 
+                     labels = c("Cluster 1", "Cluster 2", "Cluster 3", "Cluster 4"),
+                     values = c("circle open", "circle", "square open", "square filled")) +
+  theme_light())
+(ggplot(Movies, aes(y = revenue, 
+                x = vote_average,
+                shape = Movie_Clusters,
+                color = Drama)) + 
+  geom_point(size = 1) +
+  scale_shape_manual(name = "Cluster", 
+                     labels = c("Cluster 1", "Cluster 2", "Cluster 3", "Cluster 4"),
+                     values = c("circle open", "circle", "square open", "square filled")) +
+  theme_light())
+(ggplot(Movies, aes(y = revenue, 
+                x = vote_average,
+                shape = Movie_Clusters,
+                color = Drama)) + 
+  geom_point(size = 1) +
+  scale_shape_manual(name = "Cluster", 
+                     labels = c("Cluster 1", "Cluster 2", "Cluster 3", "Cluster 4"),
+                     values = c("circle open", "circle", "square open", "square filled")) +
+  theme_light())
+(ggplot(Movies, aes(y = revenue, 
+                x = vote_average,
+                shape = Movie_Clusters,
+                color = Comedy)) + 
+  geom_point(size = 1) +
+  scale_shape_manual(name = "Cluster", 
+                     labels = c("Cluster 1", "Cluster 2", "Cluster 3", "Cluster 4"),
+                     values = c("circle open", "circle", "square open", "square filled")) +
+  theme_light())
+```
+
+
+## KNN for Average Vote {.tabset}
+
+### Preparing Data
+```{r Preparing Data, echo=TRUE}
+Movies <- read.csv('./Movies.csv')
+str(Movies) 
+Movies$vote_average
+# Deleting rows where vote_average = 0 as a flaw in the data
+Movies <- Movies[Movies$vote_average !=0,]
+# Converting rating into a factor, with level 1 greater than 7.5 and 0 otherwise.
+Movies$Rating <- 0
+Movies[Movies$vote_average > 7.5,]$Rating <- 1
+Movies[Movies$vote_average <= 7.5,]$Rating <- 0
+Movies <- Movies[,-6]
+str(Movies)
+```
+
+
+### Data Partitioning                
+```{r Zoe Data Partitioning}
+# Determining data composition and baseline/prevalence
+(table(Movies$Rating)[2])/(sum(table(Movies$Rating)))
+# Partition into train, tune, and test
+part_index_1 <- createDataPartition(Movies$Rating,
+                                           times=1,
+                                           p = 0.70,
+                                           groups=1,
+                                           list=FALSE)
+train <- Movies[part_index_1,]
+test <- Movies[-part_index_1, ]
+
+dim(train)
+dim(test)
+```
+This prevalence of 8.1% shows the random chance of determining a highly rated movie, as reflected by the actual prevalence of highly rated movies (above a 7.5 vote_average).
+
+### Selecting "k"
+```{r Selecting K}
+# Function to calculate classification accuracy based on the number of "k."
+chooseK = function(k, train_set, val_set, train_class, val_class){
+  
+  # Build knn with k neighbors considered.
+  set.seed(3001)
+  class_knn = knn(train = train_set,    #<- training set cases
+                  test = val_set,       #<- test set cases
+                  cl = train_class,     #<- category for classification
+                  k = k,                #<- number of neighbors considered
+                  use.all = TRUE)       #<- control ties between class assignments
+                                        #   If true, all distances equal to the kth 
+                                        #   largest are included
+  conf_mat = table(class_knn, val_class)
+  
+  # Calculate the accuracy.
+  accu = sum(conf_mat[row(conf_mat) == col(conf_mat)]) / sum(conf_mat)                         
+  cbind(k = k, accuracy = accu)
+}
+set.seed(3001)
+knn_different_k = sapply(seq(1, 21, by = 2),  #<- set k to be odd number from 1 to 21
+                         function(x) chooseK(x, 
+                          train_set = train[, c("runtime", "budget", "Animation", "Comedy", "Adventure", "Fantasy", "Drama", "Romance", "Action", "Crime", "Thriller", "History", "ScienceFiction", "Mystery", "Western", "Horror", "Documentary", "Music", "War")],
+                          val_set = test[, c("runtime", "budget", "Animation", "Comedy", "Adventure", "Fantasy", "Drama", "Romance", "Action", "Crime", "Thriller", "History", "ScienceFiction", "Mystery", "Western", "Horror", "Documentary", "Music", "War")],
+                          train_class = train$Rating,
+                          val_class = test$Rating))
+class(knn_different_k)#matrix 
+head(knn_different_k)
+knn_different_k = data.frame(k = knn_different_k[1,],
+                             accuracy = knn_different_k[2,])
+# Plot accuracy vs. k.
+k_plot <- ggplot(knn_different_k,aes(x = k, y = accuracy)) +
+  geom_line(color = "orange", size = 1.5) +
+  geom_point(size = 3) +
+  ggtitle("KNN Elbow Chart")
+k_plot
+```
+A KNN Elbow Chart was created above plotting k against accuracy to determine that 3 nearest neighbors seems to be the best choice for k because the model's accuracy peaks at 91% when k = 3 before trailing off as k increases.
+
+
+### Training the K Classifier
+```{r Training the Classifier}
+# Training the k classifier using the class package. 
+# Setting seed so results are reproducible from KNN's randomized algorithm
+set.seed(3001)
+# Target variables include runtime, budget, and genre. Revenue and popularity were excluded as these are highly correlated to rating, and are only known after the movie is released, which isn't helpful for our business question of movie production.
+movies_3NN <-  knn(train = train[, c("runtime", "budget", "Animation", "Comedy", "Adventure", "Fantasy", "Drama", "Romance", "Action", "Crime", "Thriller", "History", "ScienceFiction", "Mystery", "Western", "Horror", "Documentary", "Music", "War")],#<- training set cases
+               test = test[, c("runtime", "budget", "Animation", "Comedy", "Adventure", "Fantasy", "Drama", "Romance", "Action", "Crime", "Thriller", "History", "ScienceFiction", "Mystery", "Western", "Horror", "Documentary", "Music", "War")],    #<- test set cases
+               cl = train$Rating,#<- category for true classification
+               k = 3,#<- number of neighbors considered
+               use.all = TRUE,
+               prob = TRUE) #<- control ties between class assignments If true, all distances equal to the kth largest are included
+# Viewing the output:
+str(movies_3NN)
+table(movies_3NN)
+length(movies_3NN)
+```
+
+### KNN Classification Comparison
+```{r KNN Classification Comparison}
+# How does the kNN classification compare to the true class?
+# Combining the predictions from movies_3NN to the original data set.
+kNN_res = table(movies_3NN,
+                test$Rating)
+kNN_res
+sum(kNN_res)  
+# TP TN
+kNN_res[row(kNN_res) == col(kNN_res)]
+# Calculate the accuracy rate by dividing the correct classifications by the total number of classifications.
+kNN_acc = sum(kNN_res[row(kNN_res) == col(kNN_res)]) / sum(kNN_res)
+kNN_acc
+# Our KNN model returns a 90 % accuracy rate of predicting a highly rated move (with an average vote above 7.5), which is a great improvement from the baserate of 8.1%.
+str(movies_3NN)
+str(as.factor((test$Rating)))
+confusionMatrix(as.factor(movies_3NN), as.factor(test$Rating), positive = "1", dnn=c("Prediction", "Actual"), mode = "sens_spec")
+      
+#Reference for confusion matrix: https://www.rdocumentation.org/packages/caret/versions/6.0-86/topics/confusionMatrix 
+```
+Our KNN model confusion matrix produces a 90 % accuracy rate of predicting a highly rated move (a movie with an average vote above 7.5), which is a great improvement from the baserate of 8.1%. The sensitivity or true positive rate, when highly rated movies are accurately classified, is 4.1%, which is very low. However, the model's specificity is 98%, and false positive rate is 100% - 98% = 2%, which is very low, meaning the model rarely inaccurately classifies poorly rated movies as highly rated ones. 
+
+The high accuracy and specificity show our model usually accurately classifies movie ratings, which is important in informing our business problem of deciding how to create a highly rated movie based on genre, budget, and runtime.
+
+
+
+## DT for Revenue {.tabset}
+
+The goal here is really to be able to create a model that can predict if a movie is going to generate at least $5 million in revenue. To do this, we're going to use C5.0, which will construct decision trees in two phases: First, it will generate a larger tree to loosely fit the data, and then it will be 'pruned' down to something more tightly fitting.
+
+### Pre-processing:
+```{r RevDT Pre-Processing I}
+movies = read.csv('./Movies.csv')
+movies = movies[1:1000,]
+#View(movies)
+#Lets add a new column to the dataset that turns movies that made less than $5,000,000 revenue into 0s, and 
+#movies that made more than $5,000,000 into 1s. This is what we want our model to be able to classify.
+movies = movies %>%
+  mutate(new_rev = case_when(revenue > 5000000 ~ "moreThan5Mil",
+                             revenue < 5000000 ~ "LessThan5Mil"
+                             #TRUE ~ 0 #check this
+                             ))
+```
+
+```{r RevDT Pre-Processing II}
+#Change to factors
+movies[2] = as.factor(movies$original_language)
+movies[25] = as.factor(movies$new_rev)
+movies$original_language <- fct_collapse(movies$original_language,
+                        English = "English",
+                        Other = c("Italian","French","German","Japanese")
+                        )
+```
+
+### Partitioning
+```{r RevDT Partitioning}
+#There is not a easy way to create 3 partitions using the createDataPartitions
+#so we are going to use it twice. Mostly because we want to stratify on the variable we are working to predict. 
+part_index_1 <- caret::createDataPartition(movies$new_rev,
+                                           times=1,
+                                           p = 0.70,
+                                           groups=1,
+                                           list=FALSE)
+train <- movies[part_index_1, ]
+tune_and_test <- movies[-part_index_1, ]
+#The we need to use the function again to create the tuning set 
+tune_and_test_index <- createDataPartition(tune_and_test$new_rev,
+                                           p = .5,
+                                           list = FALSE,
+                                           times = 1)
+tune <- tune_and_test[tune_and_test_index, ]
+test <- tune_and_test[-tune_and_test_index, ]
+dim(train)
+dim(test)# these will be slightly off because the data set isn't perfectly even
+#buts its not a issue. 
+dim(tune)
+```
+
+```{r RevDT Features}
+# Choose the features and classes
+features <- train[,c(-4,-(8:24),-25)] #dropping 4 and 25. 4 is the original revenue count, which could be used to perfectly predict the 0 or 1 value, which is column 25
+```
+
+### Initial Model
+```{r RevDT Generating Model}
+target <- train$new_rev
+str(features)
+str(target)
+#Cross validation process 
+fitControl <- trainControl(method = "repeatedcv",
+                          number = 10,
+                          repeats = 5, 
+                          returnResamp="all",
+                          classProbs = TRUE,
+                          allowParallel = TRUE) 
+# number - number of folds
+# repeats - number of times the CV is repeated, here it's 5 take the average of
+# those 5 repeats
+# Grid search options for each of the models available in CARET
+# http://topepo.github.io/caret/train-models-by-tag.html#tree-based-model
+grid <- expand.grid(.winnow = c(TRUE,FALSE), 
+                    .trials=c(1,5,10,15,20), 
+                    .model="tree")
+#expand.grid - series of options that are available for model training
+#winnow - whether to reduce the feature space -  Works to remove unimportant 
+#features but it doesn't always work, in the above we are winnowing.  
+#trails - number of boosting iterations to try, 1 indicates a single model 
+#model - type of ml model
+set.seed(1984)
+movies_mdl <- train(x=features,
+                y=target,
+                method="C5.0",
+                tuneGrid=grid,
+                trControl=fitControl,
+                verbose=TRUE)
+movies_mdl #provides us the hyper-parameters that were selected through the grid
+# search process. 
+# visualize the re-sample distributions
+xyplot(movies_mdl,type = c("g", "p", "smooth"))
+varImp(movies_mdl)
+```
+
+### Model Eval
+Let's use the model to predict and the evaluate the performance
+```{r RevDT Model Eval I}
+movies_pred_tune = predict(movies_mdl,tune, type= "raw")
+#View(as_tibble(movies_pred_tune))
+#Lets use the confusion matrix
+(movies_eval <- confusionMatrix(as.factor(movies_pred_tune), 
+                as.factor(tune$new_rev), 
+                dnn=c("Prediction", "Actual"), 
+                mode = "sens_spec"))
+table(tune$new_rev)
+(movies_pred_tune_p = predict(movies_mdl,tune,type= "prob"))
+```
+
+### Tuning
+
+Now we can optimize the model using the tune dataset. We can create a few models and see which ones are the most optimal in terms of their metrics, such as accuracy and sensitivity.
+
+Let's make some changes and see if we can improve
+
+```{r RevDT Optimization I}
+#Cross Validation Process, changing method for CV and adding a different metric for optimization 
+library(MLmetrics)
+f1 <- function(data, lev = NULL, model = NULL) {
+  f1_val <- F1_Score(y_pred = data$pred, y_true = data$obs, positive = lev[1])
+  c(F1 = f1_val)
+}
+#source: https://stackoverflow.com/questions/37666516/caret-package-custom-metric
+fitControl_2 <- trainControl(method = "LGOCV",
+                          number = 10, 
+                          returnResamp="all",
+                          classProbs = TRUE,
+                          allowParallel = TRUE,
+                          summaryFunction = f1) 
+# grid search, increasing the boosting rounds 
+grid_2 <- expand.grid(.winnow = c(TRUE,FALSE), 
+                    .trials=c(10,15,20,25,30), 
+                    .model="tree")
+# training model
+set.seed(1984)
+movies_mdl_2 <- train(x=features,
+                y=target,
+                method="C5.0",
+                tuneGrid=grid_2,
+                metric="F1",
+                trControl=fitControl_2)
+movies_mdl
+movies_mdl_2
+```
+
+Model 2 Eval:
+
+```{r RevDT Model Eval II}
+movies_pred_tune_2 = predict(movies_mdl_2,tune, type= "raw")
+#Lets use the confusion matrix
+(model_eval_2 <- confusionMatrix(as.factor(movies_pred_tune_2), 
+                as.factor(tune$new_rev), 
+                dnn=c("Prediction", "Actual"), 
+                mode = "sens_spec"))
+model_eval_2
+movies_eval
+```
+
+Now give the changes we made above let's final the model and check the metrics output on the test file. 
+
+### Final Model
+```{r Rev DT Model Eval III}
+#This is actually pretty good. Increased the sensitivity by more than 10% without losing much accuracy
+movies_pred_test = predict(movies_mdl_2,test, type= "raw")
+#Using the confusion matrix:
+confusionMatrix(as.factor(movies_pred_test), 
+                as.factor(test$new_rev), 
+                dnn=c("Prediction", "Actual"), 
+                mode = "sens_spec")
+(movies_pred_tune_p = predict(movies_mdl,test,type= "prob"))
+```
+
+It seems that the final model is decent. The accuracy stayed relatively similar, but overall as we progressed through these models, the sentivitiy got a lot higher. 94% sensitivity.
+
+ 
+
+
+
+## RF for Revenue {.tabset}
+
+### Pre-processing
+```{r RevRF Preprocessing}
+movies = read.csv('./Movies.csv')
+movies[movies == "0"] <- NA
+movies[movies == "?"] <- NA
+movies <- movies[complete.cases(movies),]
+na.omit(movies)
+#movies = movies[1:1000,]
+movies = movies %>%
+  mutate(new_rev = case_when(revenue > 1000000 ~ ">1mil",
+                             revenue < 1000000 ~ "<1mil"
+                             #TRUE ~ 0 #check this
+                             ))
+#turn all the character columns into factor.
+movies[2] = as.factor(movies$original_language)
+movies[25] = as.factor(movies$new_rev)
+#boolean to factor:
+movies[,c(8:24)] = lapply(movies[,c(8:24)], as.factor)
+```
+
+### Partitioning
+Create test, tune and training sets 
+```{r RevRF Partitioning}
+#Split your data into test, tune, and train. (70/15/15)
+sample_rows = 1:nrow(movies)
+#sample_rows
+set.seed(1984) #sample(x, size, replace = FALSE, prob = NULL)
+test_rows = sample(sample_rows,
+                   dim(movies)[1]*.10, #start with 10% of our dataset, could do 20%
+                   # but random forest does require more training data because of the 
+                   # sampling so 90% might be a better approach with this small of a dataset
+                   replace = FALSE)# We don't want duplicate samples
+str(test_rows)
+#movies_train will hold 90% of the data, we're gonna use this to create different random forest models, but that other 10% that I wont touch will be in the movies_test version. Going to use that later to evaluate the model. Will be independent and untouched while I play around with the random forest models in the beginning.
+movies_train = movies[-test_rows,]
+movies_test = movies[test_rows,]
+#Splitting the Data
+#There is not a easy way to create 3 partitions using the createDataPartitions
+#so we are going to use it twice. Mostly because we want to stratify on the variable we are working to predict. What does that mean?  
+part_index_1 <- caret::createDataPartition(movies$new_rev,
+                                           times=1,
+                                           p = 0.70,
+                                           groups=1,
+                                           list=FALSE)
+train <- movies[part_index_1, ]
+tune_and_test <- movies[-part_index_1, ]
+#The we need to use the function again to create the tuning set 
+tune_and_test_index <- createDataPartition(tune_and_test$new_rev,
+                                           p = .5,
+                                           list = FALSE,
+                                           times = 1)
+tune <- tune_and_test[tune_and_test_index, ]
+test <- tune_and_test[-tune_and_test_index, ]
+dim(train)
+dim(test)# these will be slightly off because the data set isn't perfectly even
+#buts its not a issue. 
+dim(tune)
+```
+
+Calculate the initial mtry level 
+```{r RevRF mytry}
+mytry_tune <- function(x){
+  xx <- dim(x)[2]-1
+  sqrt(xx)
+}
+       
+mytry_tune(movies)
+```
+
+### Initial Model
+Run the initial RF model with 500 trees 
+```{r RevRF Model I, results='hide'}
+#default to 500
+set.seed(2023)	
+movies_RF = randomForest(new_rev~., na.action=na.omit,  #<- Formula: response variable ~ predictors.
+                            #   The period means 'use all other variables in the data'.
+                            movies_train,     #<- A data frame with the variables to be used.
+                            #y = NULL,           #<- A response vector. This is unnecessary because we're specifying a response formula.
+                            #subset = NULL,      #<- This is unnecessary because we're using all the rows in the training data set.
+                            #xtest = NULL,       #<- This is already defined in the formula by the ".".
+                            #ytest = NULL,       #<- This is already defined in the formula by "PREGNANT".
+                            ntree = 500,        #<- Number of trees to grow. This should not be set to too small a number, to ensure that every input row gets classified at least a few times.
+                            mtry = 5,            #<- Number of variables randomly sampled as candidates at each split. Default number for classification is sqrt(# of variables). Default number for regression is (# of variables / 3).
+                            replace = TRUE,      #<- Should sampled data points be replaced.
+                            #classwt = NULL,     #<- Priors of the classes. Use this if you want to specify what proportion of the data SHOULD be in each class. This is relevant if your sample data is not completely representative of the actual population 
+                            #strata = NULL,      #<- Not necessary for our purpose here.
+                            sampsize = 100,      #<- Size of sample to draw each time.
+                            nodesize = 5,        #<- Minimum numbers of data points in terminal nodes.
+                            #maxnodes = NULL,    #<- Limits the number of maximum splits. 
+                            importance = TRUE,   #<- Should importance of predictors be assessed?
+                            #localImp = FALSE,   #<- Should casewise importance measure be computed? (Setting this to TRUE will override importance.)
+                            proximity = FALSE,    #<- Should a proximity measure between rows be calculated?
+                            norm.votes = TRUE,   #<- If TRUE (default), the final result of votes are expressed as fractions. If FALSE, raw vote counts are returned (useful for combining results from different runs).
+                            do.trace = TRUE,     #<- If set to TRUE, give a more verbose output as randomForest is run.
+                            keep.forest = TRUE,  #<- If set to FALSE, the forest will not be retained in the output object. If xtest is given, defaults to FALSE.
+                            keep.inbag = TRUE)   #<- Should an n by ntree matrix be returned that keeps track of which samples are in-bag in which trees? 
+#So Looking at the confusion matrix of movies_RF, we can see that the class.error for the 0 class is pretty low, sitting at only around 5.10% The class.error for the 1 class is higher, sitting ar around 50.4%. the OOB estimate of error rate is around ~16%. I'm going to interpret some of this data and visualize it along with the error rates before changing some of the parameters in the random forest function to see how it affects my model.
+#OOB estimate of  error rate: 29%
+```
+```{r RevRF Model I Peek}
+movies_RF
+```
+
+
+### Evaluation
+Using the training and tune datasets tune the model in consideration of the number
+of trees, the number of variables to sample and the sample size that optimize the model
+output. 
+```{r RevRF Model II}
+# This is how you can call up the criteria we set for the random forest:
+movies_RF$call
+# Call up the confusion matrix and check the accuracy of the model.
+movies_RF$confusion
+movies_RF_acc = sum(movies_RF$confusion[row(movies_RF$confusion) == 
+                                                col(movies_RF$confusion)]) / 
+  sum(movies_RF$confusion)
+movies_RF_acc
+# 0.99
+# The "inbag" argument shows you which data point is included in which trees.
+str(as.data.frame(movies_RF$inbag))
+#View(as.data.frame(movies_RF$inbag))
+inbag <- as.data.frame(movies_RF$inbag)
+sum(inbag[,500])
+dim(movies_RF$inbag)
+str(as.data.frame(movies_RF$proximity)) 
+#View(as.data.frame(movies_RF$proximity)) #blank
+err.rate <- as.data.frame(movies_RF$err.rate)
+#View(err.rate)
+#### Visualize random forest results ####
+# Let's visualize the results of the random forest.
+# Let's start by looking at how the error rate changes as we add more trees.
+movies_RF_error = data.frame(1:nrow(movies_RF$err.rate),
+                                movies_RF$err.rate)
+colnames(movies_RF_error) = c("Number of Trees", "Out of the Bag",
+                                 "<$1M", ">$1M")
+movies_RF_error$Diff <- movies_RF_error$`>$1M`-movies_RF_error$`<$1M`
+#View(movies_RF_error)
+library(plotly)
+fig <- plot_ly(x=movies_RF_error$`Number of Trees`, y=movies_RF_error$Diff,name="Diff", type = 'scatter', mode = 'lines')
+fig <- fig %>% add_trace(y=movies_RF_error$`Out of the Bag`, name="OOB_Er")
+fig <- fig %>% add_trace(y=movies_RF_error$`<$1M`, name="<$1M")
+fig <- fig %>% add_trace(y=movies_RF_error$`>$1M`, name=">$1M")
+fig
+```
