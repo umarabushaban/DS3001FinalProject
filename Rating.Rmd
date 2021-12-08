@@ -36,7 +36,10 @@ library(mlbench)
 ```{r}
 # Loading our dataset
 Movies <- read.csv('./Movies.csv')
-str(Movies)
+str(Movies) 
+
+# Deleting rows where vote_average = 0 as a flaw in the data
+Movies <- Movies[Movies$vote_average !=0,]
 
 # Converting rating into a factor, with level 1 greater than 7.5 and 0 otherwise.
 Movies$Rating <- 0
@@ -74,7 +77,7 @@ dim(train)
 dim(tune)
 dim(test)
 ```
-This prevalence of 7.6% shows the random chance of determining a highly rated movie, as reflected by the actual prevalence of highly rated movies (above a 7.5 vote_average).
+This prevalence of 8.1% shows the random chance of determining a highly rated movie, as reflected by the actual prevalence of highly rated movies (above a 7.5 vote_average).
 
 ## Selecting "k"
 ```{r}
@@ -117,7 +120,7 @@ k_plot <- ggplot(knn_different_k,aes(x = k, y = accuracy)) +
 
 k_plot
 ```
-A KNN Elbow Chart was created above plotting k against accuracy to determine that 7 nearest neighbors seems to be the best choice for k because the model's accuracy peaks at 92% when k = 5 before trailing off as k increases.
+A KNN Elbow Chart was created above plotting k against accuracy to determine that 7 nearest neighbors seems to be the best choice for k because the model's accuracy peaks at 90% when k = 5 before trailing off as k increases.
 
 ## Training the K Classifier
 ```{r}
@@ -157,7 +160,7 @@ kNN_res[row(kNN_res) == col(kNN_res)]
 # Calculate the accuracy rate by dividing the correct classifications by the total number of classifications.
 kNN_acc = sum(kNN_res[row(kNN_res) == col(kNN_res)]) / sum(kNN_res)
 kNN_acc
-# Our KNN model returns a 92 % accuracy rate of predicting a highly rated move (with an average vote above 7.5), which is a great improvement from the baserate of 7.6%.
+# Our KNN model returns a 90 % accuracy rate of predicting a highly rated move (with an average vote above 7.5), which is a great improvement from the baserate of 8.1%.
 
 str(movies_3NN)
 str(as.factor((tune$Rating)))
@@ -166,7 +169,7 @@ confusionMatrix(as.factor(movies_3NN), as.factor(tune$Rating), positive = "1", d
       
 #Reference for confusion matrix: https://www.rdocumentation.org/packages/caret/versions/6.0-86/topics/confusionMatrix 
 ```
-Our KNN model confusion matrix produces a 92 % accuracy rate of predicting a highly rated move (a movie with an average vote above 7.5), which is a great improvement from the baserate of 7.6%. The sensitivity or true positive rate, when highly rated movies are accurately classified, is 1.9%, which is very low. However, the model's specificity is 99%, and false positive rate is 100% - 99% = 1%, which is very low, meaning the model rarely inaccurately classifies poorly rated movies as highly rated ones. 
+Our KNN model confusion matrix produces a 90 % accuracy rate of predicting a highly rated move (a movie with an average vote above 7.5), which is a great improvement from the baserate of 8.1%. The sensitivity or true positive rate, when highly rated movies are accurately classified, is 1.7%, which is very low. However, the model's specificity is 99%, and false positive rate is 100% - 99% = 1%, which is very low, meaning the model rarely inaccurately classifies poorly rated movies as highly rated ones. 
 
 The high accuracy and specificity show our model usually accurately classifies movie ratings, which is important in informing our business problem of deciding how to create a highly rated movie based on genre, budget, and runtime.
 
