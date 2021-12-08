@@ -353,9 +353,16 @@ The goal here is really to be able to create a model that can predict if a movie
 
 ### Pre-processing:
 ```{r RevDT Pre-Processing I}
+
 movies = read.csv('./Movies.csv')
-movies = movies[1:1000,]
+length(movies[movies$revenue == 0, ]$budget) #most of the movies dont have any revenue
+movies[movies == "0"] <- NA
+movies[movies == "?"] <- NA
+movies <- movies[complete.cases(movies),]
+na.omit(movies)
+#movies = movies[1:1000,]
 #View(movies)
+
 #Lets add a new column to the dataset that turns movies that made less than $5,000,000 revenue into 0s, and 
 #movies that made more than $5,000,000 into 1s. This is what we want our model to be able to classify.
 movies = movies %>%
@@ -369,10 +376,14 @@ movies = movies %>%
 #Change to factors
 movies[2] = as.factor(movies$original_language)
 movies[25] = as.factor(movies$new_rev)
+
+movies[,c(8:24)] = lapply(movies[,c(8:24)], as.factor)
+
 movies$original_language <- fct_collapse(movies$original_language,
                         English = "English",
                         Other = c("Italian","French","German","Japanese")
                         )
+
 ```
 
 ### Partitioning
@@ -401,7 +412,14 @@ dim(tune)
 
 ```{r RevDT Features}
 # Choose the features and classes
-features <- train[,c(-4,-(8:24),-25)] #dropping 4 and 25. 4 is the original revenue count, which could be used to perfectly predict the 0 or 1 value, which is column 25
+features <- train[,c(-4,-25)] #dropping 4 and 25. 4 is the original revenue count, which could be used to perfectly predict the 0 or 1 value, which is column 25
+
+summary(movies$revenue)
+```
+
+Baseline
+```{r}
+table(movies$new_rev)[2]/sum(table(movies$new_rev))
 ```
 
 ### Initial Model
@@ -453,7 +471,7 @@ movies_pred_tune = predict(movies_mdl,tune, type= "raw")
                 as.factor(tune$new_rev), 
                 dnn=c("Prediction", "Actual"), 
                 mode = "sens_spec"))
-table(tune$new_rev)
+#table(tune$new_rev)
 (movies_pred_tune_p = predict(movies_mdl,tune,type= "prob"))
 ```
 
@@ -536,16 +554,26 @@ movies[movies == "?"] <- NA
 movies <- movies[complete.cases(movies),]
 na.omit(movies)
 #movies = movies[1:1000,]
+
 movies = movies %>%
   mutate(new_rev = case_when(revenue > 1000000 ~ ">1mil",
                              revenue < 1000000 ~ "<1mil"
                              #TRUE ~ 0 #check this
                              ))
+
 #turn all the character columns into factor.
 movies[2] = as.factor(movies$original_language)
 movies[25] = as.factor(movies$new_rev)
+
 #boolean to factor:
 movies[,c(8:24)] = lapply(movies[,c(8:24)], as.factor)
+
+movies = movies[,-c(6)]
+```
+Baseline
+```{r}
+table(movies$new_rev)[2]/sum(table(movies$new_rev))
+#baseline of 90%. Lets see if our model has a higher accuracy than this
 ```
 
 ### Partitioning
